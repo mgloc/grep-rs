@@ -1,21 +1,25 @@
-use std::{io, usize};
+use std::io::{self, BufRead};
 
 struct CliArgs {
     file_path: std::path::PathBuf,
     pattern: String,
 }
 
-fn main() -> io::Result<()> {
+fn main() -> std::io::Result<()> {
     let mut args = std::env::args();
     let cli_args = parse_args(&mut args).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-    let buffer = std::fs::read_to_string(&cli_args.file_path)?;
+    let file = std::fs::File::open(cli_args.file_path)?;
+    let mut reader = io::BufReader::new(file);
+    let mut buffer = String::new();
 
-    for line in buffer.lines() {
-        if let Some(_) = grep_line(line, &cli_args.pattern) {
-            println!("{}", line)
+    while 0 != reader.read_line(&mut buffer)? {
+        if grep_rs::check_pattern(&buffer, &cli_args.pattern).is_some() {
+            print!("{}", buffer);
         };
+        buffer.clear();
     }
+
     Ok(())
 }
 
@@ -36,8 +40,4 @@ fn parse_args(args: &mut std::env::Args) -> Result<CliArgs, String> {
             file_path: std::path::PathBuf::from(file_path),
         })
     }
-}
-
-fn grep_line(s: &str, pattern: &String) -> Option<usize> {
-    s.find(pattern)
 }
