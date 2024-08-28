@@ -1,43 +1,101 @@
-use std::io::{self, BufRead};
+use std::env::args;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader};
+use std::process::exit;
 
-struct CliArgs {
-    file_path: std::path::PathBuf,
-    pattern: String,
+#[derive(Default)]
+struct GrepOptions {
+    case_insensitive: bool,
+    show_line_numbers: bool,
+    invert_match: bool,
 }
 
-fn main() -> std::io::Result<()> {
-    let mut args = std::env::args();
-    let cli_args = parse_args(&mut args).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+fn main() {
+    let args = args().collect::<Vec<String>>();
+    match run(args) {
+        Ok(()) => exit(0),
+        Err(err) => {
+            eprintln!("{}: {}", "Problem encountered", err);
+            exit(1);
+        }
+    };
+}
 
-    let file = std::fs::File::open(cli_args.file_path)?;
-    let mut reader = io::BufReader::new(file);
-    let mut buffer = String::new();
+fn run(args: Vec<String>) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("Usage: grep [options] <pattern> [file_name]".to_string());
+    }
 
-    while 0 != reader.read_line(&mut buffer)? {
-        if grep_rs::check_pattern(&buffer, &cli_args.pattern).is_some() {
-            print!("{}", buffer);
-        };
-        buffer.clear();
+    let mut options = GrepOptions::default();
+    let mut pattern = String::new();
+    let mut file_name: Option<String> = None;
+
+    let mut iter = args[1..].iter();
+    while let Some(arg) = iter.next() {
+        if arg.starts_with("-") {
+            for flag in arg[1..].chars() {
+                match flag {
+                    'i' => options.case_insensitive = true,
+                    'n' => options.show_line_numbers = true,
+                    'v' => options.invert_match = true,
+                    _ => return Err(format!("Unknown option: -{}", flag))?,
+                }
+            }
+        } else if pattern.is_empty() {
+            pattern = arg.to_string();
+        } else if file_name.is_none() {
+            file_name = Some(arg.to_string());
+        } else {
+            return Err(
+                "Too many argument given: Usage: grep [options] <pattern> [file_name]".to_string(),
+            );
+        }
+    }
+
+    if pattern.is_empty() {
+        return Err("Pattern is required".to_string());
+    }
+
+    match file_name {
+        Some(file_name) => {
+            let file = File::open(file_name).map_err(|err| format!("Filename error: {}", err))?;
+            let reader = BufReader::new(file);
+            grep(reader, &pattern, &options);
+        }
+        None => {
+            let stdin = io::stdin();
+            let reader = stdin.lock();
+            grep(reader, &pattern, &options);
+        }
     }
 
     Ok(())
 }
 
-fn parse_args(args: &mut std::env::Args) -> Result<CliArgs, String> {
-    let pattern = args
-        .nth(1)
-        .ok_or_else(|| "Pattern argument missing".to_string())?;
-    let file_path = args
-        .next()
-        .ok_or_else(|| "File path argument missing".to_string())?;
+fn grep<R: BufRead>(reader: R, pattern: &str, options: &GrepOptions) {
+    let mut line_number = 0;
+    for line in reader.lines() {
+        let line = line.expect("Could not read line");
+        line_number += 1;
 
-    if args.next().is_some() {
-        let error_message = format!("Expected 2 args, {:?} received", 2 + args.count());
-        Err(error_message)
-    } else {
-        Ok(CliArgs {
-            pattern,
-            file_path: std::path::PathBuf::from(file_path),
-        })
+        let matched = if options.case_insensitive {
+            line.to_lowercase().contains(&pattern.to_lowercase())
+        } else {
+            line.contains(pattern)
+        };
+
+        let should_print = if options.invert_match {
+            !matched
+        } else {
+            matched
+        };
+
+        if should_print {
+            if options.show_line_numbers {
+                println!("{}: {}", line_number, line);
+            } else {
+                println!("{}", line);
+            }
+        }
     }
 }
